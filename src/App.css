@@ -51,3 +51,39 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* New layout responsive sizes */
+.sensor-grid-smaller {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+
+@media (max-width: 1024px) {
+  .sensor-grid-smaller {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .sensor-grid-smaller {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Animations for roosters */
+.rooster-anim {
+  animation: walk-left 25s linear infinite;
+  transform: translateX(110vw);
+  bottom: 0;
+}
+
+@keyframes walk-left {
+  0% {
+    transform: translateX(110vw) scaleX(1);
+  }
+
+  100% {
+    transform: translateX(-30vw) scaleX(1);
+  }
+}
