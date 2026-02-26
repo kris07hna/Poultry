@@ -4,6 +4,7 @@ import { db } from "./lib/firebase";
 import { CelestialSphere } from "./components/ui/celestial-sphere";
 import { Typewriter } from "./components/ui/typewriter-text";
 import { DotLottieReact } from "@lottiefiles/dotlottie-react";
+import "./App.css";
 import {
   LineChart,
   Line,
@@ -16,6 +17,7 @@ import {
 // ── Types ────────────────────────────────────────────────────────────────────
 interface SensorReading {
   ts: number;
+  timestamp?: number;
   temperature: number;
   humidity: number;
   lux: number;
@@ -27,7 +29,7 @@ interface SensorReading {
   pm10: number;
 }
 
-type SensorKey = keyof Omit<SensorReading, "ts">;
+type SensorKey = keyof Omit<SensorReading, "ts" | "timestamp">;
 
 // ── Sensor metadata ──────────────────────────────────────────────────────────
 const SENSORS: {
@@ -52,13 +54,22 @@ const SENSORS: {
 
 const MAX_HISTORY = 30;
 
+// Keys where 0 means "sensor offline" (LDR excluded — 0 lux is valid in darkness)
+const ZERO_IS_OFFLINE: Set<SensorKey> = new Set([
+  "temperature", "humidity", "co2ppm", "ppmNH3", "ppmH2S", "so2ppm", "pm25", "pm10",
+]);
+
+function isOffline(key: SensorKey, value: number) {
+  return ZERO_IS_OFFLINE.has(key) && value === 0;
+}
+
 function fmt(v: number | null | undefined, digits = 1) {
   if (v == null || v < 0) return "—";
   return Number(v).toFixed(digits);
 }
 
-function statusColor(value: number, safe: number, danger: number) {
-  if (value < 0) return "#6b7280";
+function statusColor(value: number, safe: number, danger: number, offline: boolean) {
+  if (offline || value < 0) return "#6b7280";
   if (value <= safe) return "#22c55e";
   if (value <= danger) return "#f59e0b";
   return "#ef4444";
@@ -73,8 +84,10 @@ function SensorCard({
   history: SensorReading[];
 }) {
   const latest = history.length ? history[history.length - 1][sensor.key] : -1;
-  const dot = statusColor(latest, sensor.safe, sensor.danger);
+  const offline = isOffline(sensor.key, latest);
+  const dot = statusColor(latest, sensor.safe, sensor.danger, offline);
   const chartData = history.map((r, i) => ({ i, v: r[sensor.key] }));
+  const allZero = ZERO_IS_OFFLINE.has(sensor.key) && chartData.length > 0 && chartData.every((d) => d.v === 0);
 
   return (
     <div style={{
@@ -112,13 +125,31 @@ function SensorCard({
 
       {/* Value */}
       <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginTop: 2 }}>
-        <span style={{
-          color: "#fff", fontSize: 38, fontWeight: 800, lineHeight: 1,
-          textShadow: `0 0 20px ${sensor.color}88`,
-        }}>
-          {fmt(latest)}
-        </span>
-        <span style={{ color: "#7c3aed", fontSize: 14, fontWeight: 600 }}>{sensor.unit}</span>
+        {offline ? (
+          <>
+            <span style={{
+              color: "#6b7280", fontSize: 22, fontWeight: 700, lineHeight: 1,
+              fontFamily: "'Press Start 2P', monospace", letterSpacing: 1,
+            }}>
+              NO DATA
+            </span>
+            <span style={{
+              background: "#78350f88", border: "1px solid #fb923c44",
+              borderRadius: 999, padding: "2px 8px", marginLeft: 4,
+              fontSize: 9, color: "#fbbf24", fontWeight: 600,
+            }}>SENSOR OFFLINE</span>
+          </>
+        ) : (
+          <>
+            <span style={{
+              color: "#fff", fontSize: 38, fontWeight: 800, lineHeight: 1,
+              textShadow: `0 0 20px ${sensor.color}88`,
+            }}>
+              {fmt(latest)}
+            </span>
+            <span style={{ color: "#7c3aed", fontSize: 14, fontWeight: 600 }}>{sensor.unit}</span>
+          </>
+        )}
       </div>
 
       {/* Threshold pills */}
@@ -140,28 +171,47 @@ function SensorCard({
       <div style={{ height: 1, background: "rgba(139,92,246,0.12)", margin: "4px 0" }} />
 
       {/* Chart */}
-      <div style={{ height: 80 }}>
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={chartData}>
-            <XAxis dataKey="i" hide />
-            <YAxis hide domain={["auto", "auto"]} />
-            <Tooltip
-              contentStyle={{
-                background: "#0d0d2e",
-                border: `1px solid ${sensor.color}55`,
-                borderRadius: 10, fontSize: 12, color: "#e2e8f0",
-              }}
-              formatter={(v: number | undefined) => [`${fmt(v ?? -1)}${sensor.unit}`, sensor.label]}
-              labelFormatter={() => ""}
-            />
-            <Line
-              type="monotone" dataKey="v"
-              stroke={sensor.color} strokeWidth={2.5}
-              dot={false} isAnimationActive={false}
-              strokeLinecap="round"
-            />
-          </LineChart>
-        </ResponsiveContainer>
+      <div style={{ height: 80, position: "relative" }}>
+        {allZero ? (
+          <div style={{
+            height: "100%", display: "flex", flexDirection: "column",
+            alignItems: "center", justifyContent: "center", gap: 6,
+            background: "rgba(107,114,128,0.06)", borderRadius: 12,
+            border: "1px dashed rgba(107,114,128,0.2)",
+          }}>
+            <span style={{
+              fontSize: 10, color: "#6b7280",
+              fontFamily: "'Press Start 2P', monospace", letterSpacing: 1,
+            }}>
+              NO DATA AVAILABLE
+            </span>
+            <span style={{ fontSize: 9, color: "#4b5563" }}>
+              Sensor not connected
+            </span>
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={chartData}>
+              <XAxis dataKey="i" hide />
+              <YAxis hide domain={["auto", "auto"]} />
+              <Tooltip
+                contentStyle={{
+                  background: "#0d0d2e",
+                  border: `1px solid ${sensor.color}55`,
+                  borderRadius: 10, fontSize: 12, color: "#e2e8f0",
+                }}
+                formatter={(v: number | undefined) => [`${fmt(v ?? -1)}${sensor.unit}`, sensor.label]}
+                labelFormatter={() => ""}
+              />
+              <Line
+                type="monotone" dataKey="v"
+                stroke={sensor.color} strokeWidth={2.5}
+                dot={false} isAnimationActive={false}
+                strokeLinecap="round"
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        )}
       </div>
     </div>
   );
@@ -346,11 +396,12 @@ export default function App() {
         {latest && (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center", marginBottom: 40 }}>
             {[
-              { label: "TEMP", value: `${fmt(latest.temperature)}°C`, color: "#60a5fa" },
-              { label: "HUMIDITY", value: `${fmt(latest.humidity)}%`, color: "#38bdf8" },
-              { label: "CO₂", value: `${fmt(latest.co2ppm, 0)} ppm`, color: "#a78bfa" },
-              { label: "NH₃", value: `${fmt(latest.ppmNH3)} ppm`, color: "#34d399" },
-              { label: "PM2.5", value: `${fmt(latest.pm25, 0)} µg`, color: "#c084fc" },
+              { label: "TEMP", value: latest.temperature === 0 ? "OFFLINE" : `${fmt(latest.temperature)}°C`, color: "#60a5fa", off: latest.temperature === 0 },
+              { label: "HUMIDITY", value: latest.humidity === 0 ? "OFFLINE" : `${fmt(latest.humidity)}%`, color: "#38bdf8", off: latest.humidity === 0 },
+              { label: "LUX", value: `${fmt(latest.lux, 0)} lux`, color: "#facc15", off: false },
+              { label: "CO₂", value: latest.co2ppm === 0 ? "OFFLINE" : `${fmt(latest.co2ppm, 0)} ppm`, color: "#a78bfa", off: latest.co2ppm === 0 },
+              { label: "NH₃", value: latest.ppmNH3 === 0 ? "OFFLINE" : `${fmt(latest.ppmNH3)} ppm`, color: "#34d399", off: latest.ppmNH3 === 0 },
+              { label: "PM2.5", value: latest.pm25 === 0 ? "OFFLINE" : `${fmt(latest.pm25, 0)} µg`, color: "#c084fc", off: latest.pm25 === 0 },
             ].map((s) => (
               <div key={s.label} style={{
                 background: "rgba(10,8,40,0.72)", border: `1px solid ${s.color}33`,
@@ -358,19 +409,15 @@ export default function App() {
                 display: "flex", gap: 10, alignItems: "center",
                 boxShadow: `0 0 16px ${s.color}18`,
               }}>
-                <span style={{ fontSize: 10, color: "#6b7280", fontFamily: "'Press Start 2P', monospace", letterSpacing: 0.5 }}>{s.label}</span>
-                <span style={{ fontWeight: 800, color: s.color, fontSize: 14, textShadow: `0 0 12px ${s.color}88` }}>{s.value}</span>
+                <span style={{ fontSize: 10, color: s.off ? "#4b5563" : "#6b7280", fontFamily: "'Press Start 2P', monospace", letterSpacing: 0.5 }}>{s.label}</span>
+                <span style={{ fontWeight: 800, color: s.off ? "#6b7280" : s.color, fontSize: s.off ? 10 : 14, textShadow: s.off ? "none" : `0 0 12px ${s.color}88`, fontFamily: s.off ? "'Press Start 2P', monospace" : "inherit" }}>{s.value}</span>
               </div>
             ))}
           </div>
         )}
 
         {/* ── Sensor Grid — 3 columns ── */}
-        <div style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(3, 1fr)",
-          gap: 20,
-        }}>
+        <div className="sensor-grid">
           {SENSORS.map((s) => (
             <SensorCard key={s.key} sensor={s} history={history} />
           ))}
